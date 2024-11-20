@@ -1,11 +1,12 @@
-import stat, errno, fuse, sys, os
+import stat, errno, sys, os
 import os.path
+from fuse import Fuse
+import fuse
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fuse import Fuse
 
 fuse.fuse_python_api = (0, 2)
 
@@ -26,23 +27,25 @@ class YTFUSE(Fuse):
     def _channel_list(self):
         return self.CHANNEL_LIST
 
-    def _get_videos(self, channelId: str):
-        if not channelId in self._channel_list():
+    def _get_videos(self, channel_id: str):
+        if not channel_id in self._channel_list():
             return b""
 
-        if "_channel" + channelId in self.DATA_STORE:
-            return self.DATA_STORE["_channel" + channelId]
+        if "_channel" + channel_id in self.DATA_STORE:
+            return self.DATA_STORE["_channel" + channel_id]
 
-        uploadsPlaylistId = (
+        uploads_playlist_id = (
             requests.get(
-                f"https://www.googleapis.com/youtube/v3/channels?forHandle={channelId}&key={self.YT_API_KEY}&part=contentDetails"
+                f"https://www.googleapis.com/youtube/v3/channels?forHandle={channel_id}&key={self.YT_API_KEY}&part=contentDetails",
+                timeout=15,
             )
             .json()
             .get("items")[0]["contentDetails"]["relatedPlaylists"]["uploads"]
         )
 
         videos = requests.get(
-            f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={uploadsPlaylistId}&maxResults=50&key={self.YT_API_KEY}"
+            f"https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId={uploads_playlist_id}&maxResults=50&key={self.YT_API_KEY}",
+            timeout=15,
         ).json()["items"]
 
         for v in videos:
@@ -50,7 +53,10 @@ class YTFUSE(Fuse):
                 f"{self.CACHE_FOLDER}/{v["snippet"]["resourceId"]["videoId"]}.jpg"
             ):
                 print(v["snippet"]["thumbnails"]["default"])
-                thumb = requests.get(v["snippet"]["thumbnails"]["default"]["url"])
+                thumb = requests.get(
+                    v["snippet"]["thumbnails"]["default"]["url"],
+                    timeout=15,
+                )
                 with open(
                     f"{self.CACHE_FOLDER}/{v["snippet"]["resourceId"]["videoId"]}.jpg",
                     "wb",
@@ -59,10 +65,10 @@ class YTFUSE(Fuse):
             else:
                 print("skip thumbnail dowload")
 
-        self.DATA_STORE["_channel" + channelId] = videos
+        self.DATA_STORE["_channel" + channel_id] = videos
         return videos
 
-    def readdir(self, path: str, offset: int):
+    def readdir(self, path: str, _offset: int):
         contents = [".", ".."]
         if path == "/":
             contents.extend(self._channel_list())
@@ -74,8 +80,8 @@ class YTFUSE(Fuse):
         # elif path.startswith("/@"):
         else:
             print("CHANNEL")
-            channelName = path.split("/")[1]
-            videos = self._get_videos(channelName)
+            channel_name = path.split("/")[1]
+            videos = self._get_videos(channel_name)
             print("LENGTH OF VIDEOS" + str(len(videos)))
             for v in videos:
                 contents.append(
@@ -134,24 +140,24 @@ class YTFUSE(Fuse):
         # Path does not match any known file objects
         return -errno.ENOENT
 
-    def read(self, path: str, size: int, offset: int) -> bytes:
+    def read(self, path: str, _size: int, _offset: int) -> bytes:
         if path == "/files/README.md":
             return b"readme.md file"
         try:
             idx = path[1:].index("/")
-            channelId = path[1 : idx + 1]
-            videoName = path[idx + 2 :]
-            print(channelId)
-            videoName = path.split("/")[2]
-            videoId = videoName[:11]
-            fileContents = f"""[Desktop Entry]
+            channel_id = path[1 : idx + 1]
+            video_name = path[idx + 2 :]
+            print(channel_id)
+            video_name = path.split("/")[2]
+            video_id = video_name[:11]
+            file_contents = f"""[Desktop Entry]
 
 Type=Application
 
-Name={videoName[12:-8]}
-Exec=mpv --ytdl-raw-options=paths=/tmp ytdl://{videoId}
+Name={video_name[12:-8]}
+Exec=mpv --ytdl-raw-options=paths=/tmp ytdl://{video_id}
 Icon=preferences-desktop
-Icon={self.CACHE_FOLDER}/{videoId}.jpg
+Icon={self.CACHE_FOLDER}/{video_id}.jpg
 
 Comment=
 
@@ -161,36 +167,36 @@ Keywords=youtube;
 RunInTerminal=true
 NoDisplay=false
 """
-            return bytes(fileContents, "utf-8")
+            return bytes(file_contents, "utf-8")
         except ValueError:
             return -errno.ENOENT
 
     def mkdir(self, path: str, mode: str):
-        parentDir, newChannel = os.path.split(path)
+        parent_dir, new_channel = os.path.split(path)
 
-        if parentDir != "/":
+        if parent_dir != "/":
             return -errno.ENOENT
 
-        if newChannel in self._channel_list():
+        if new_channel in self._channel_list():
             return errno.EEXIST
 
-        self.CHANNEL_LIST.append(newChannel)
+        self.CHANNEL_LIST.append(new_channel)
 
     def rename(self, pathfrom: str, pathto: str):
-        parentDir, oldName = os.path.split(pathfrom)
+        parent_dir, old_name = os.path.split(pathfrom)
 
-        if parentDir != "/":
+        if parent_dir != "/":
             return -errno.ENOENT
 
-        parentDir, newName = os.path.split(pathto)
+        parent_dir, new_name = os.path.split(pathto)
 
-        if parentDir != "/":
+        if parent_dir != "/":
             return -errno.ENOENT
 
         for i in range(len(self.CHANNEL_LIST)):
             print(i)
-            if self.CHANNEL_LIST[i] == oldName:
-                self.CHANNEL_LIST[i] = newName
+            if self.CHANNEL_LIST[i] == old_name:
+                self.CHANNEL_LIST[i] = new_name
                 break
             i = i + 1
 
@@ -202,12 +208,14 @@ def main():
     title = "YouTube browser via FUSE"
     description = "A filesystem that browses YouTube channels and plays videos"
 
-    usage = "\n\nBeginning FUSE\n  %s: %s\n\n%s\n\n%s" % (
-        sys.argv[0],
-        title,
-        description,
-        fuse.Fuse.fusage,
-    )
+    # usage = "\n\nBeginning FUSE\n  %s: %s\n\n%s\n\n%s" % (
+    #     sys.argv[0],
+    #     title,
+    #     description,
+    #     fuse.Fuse.fusage,
+    # )
+
+    usage = f"\n\nBeginning FUSE\n  {sys.argv[0]}: {title}\n\n{description}\n\n{fuse.Fuse.fusage}"
 
     server = YTFUSE(
         version="%prog " + fuse.__version__, usage=usage, dash_s_do="setsingle"
