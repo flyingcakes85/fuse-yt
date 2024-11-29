@@ -11,13 +11,6 @@ load_dotenv()
 fuse.fuse_python_api = (0, 2)
 
 
-try:
-    os.mkdir(os.getenv("CACHE_FOLDER"))
-except:
-    print("folder exists")
-    # absolutely the wrong way of doing it
-
-
 class YTFUSE(Fuse):
     YT_API_KEY = os.getenv("YT_API_KEY")
     DATA_STORE = {}
@@ -52,7 +45,6 @@ class YTFUSE(Fuse):
             if not os.path.isfile(
                 f"{self.CACHE_FOLDER}/{v["snippet"]["resourceId"]["videoId"]}.jpg"
             ):
-                print(v["snippet"]["thumbnails"]["default"])
                 thumb = requests.get(
                     v["snippet"]["thumbnails"]["default"]["url"],
                     timeout=15,
@@ -72,17 +64,9 @@ class YTFUSE(Fuse):
         contents = [".", ".."]
         if path == "/":
             contents.extend(self._channel_list())
-            contents.append("files")
-
-        elif path == "/files":
-            contents.append("README.md")
-
-        # elif path.startswith("/@"):
         else:
-            print("CHANNEL")
             channel_name = path.split("/")[1]
             videos = self._get_videos(channel_name)
-            print("LENGTH OF VIDEOS" + str(len(videos)))
             for v in videos:
                 contents.append(
                     v["snippet"]["resourceId"]["videoId"]
@@ -92,7 +76,6 @@ class YTFUSE(Fuse):
                 )
 
         for r in contents:
-            print(r)
             yield fuse.Direntry(r)
 
     def getattr(self, path: str) -> fuse.Stat:
@@ -103,12 +86,6 @@ class YTFUSE(Fuse):
         if path in dirs or path == "/files":
             st.st_mode = stat.S_IFDIR | 0o555
             st.st_nlink = 2
-            return st
-
-        if path == "/files/README.md":
-            st.st_mode = stat.S_IFREG | 0o444
-            st.st_nlink = 1
-            st.st_size = 512
             return st
 
         if path.endswith(".desktop"):
@@ -144,10 +121,6 @@ class YTFUSE(Fuse):
         if path == "/files/README.md":
             return b"readme.md file"
         try:
-            idx = path[1:].index("/")
-            channel_id = path[1 : idx + 1]
-            video_name = path[idx + 2 :]
-            print(channel_id)
             video_name = path.split("/")[2]
             video_id = video_name[:11]
             file_contents = f"""[Desktop Entry]
@@ -156,7 +129,6 @@ Type=Application
 
 Name={video_name[12:-8]}
 Exec=mpv --ytdl-raw-options=paths=/tmp ytdl://{video_id}
-Icon=preferences-desktop
 Icon={self.CACHE_FOLDER}/{video_id}.jpg
 
 Comment=
@@ -179,7 +151,6 @@ NoDisplay=false
 
         if new_channel in self._channel_list():
             return errno.EEXIST
-
         self.CHANNEL_LIST.append(new_channel)
 
     def rename(self, pathfrom: str, pathto: str):
@@ -194,7 +165,6 @@ NoDisplay=false
             return -errno.ENOENT
 
         for i in range(len(self.CHANNEL_LIST)):
-            print(i)
             if self.CHANNEL_LIST[i] == old_name:
                 self.CHANNEL_LIST[i] = new_name
                 break
@@ -207,13 +177,6 @@ def main():
 
     title = "YouTube browser via FUSE"
     description = "A filesystem that browses YouTube channels and plays videos"
-
-    # usage = "\n\nBeginning FUSE\n  %s: %s\n\n%s\n\n%s" % (
-    #     sys.argv[0],
-    #     title,
-    #     description,
-    #     fuse.Fuse.fusage,
-    # )
 
     usage = f"\n\nBeginning FUSE\n  {sys.argv[0]}: {title}\n\n{description}\n\n{fuse.Fuse.fusage}"
 
