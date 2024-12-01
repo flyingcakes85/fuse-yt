@@ -118,8 +118,6 @@ class YTFUSE(Fuse):
         return -errno.ENOENT
 
     def read(self, path: str, _size: int, _offset: int) -> bytes:
-        if path == "/files/README.md":
-            return b"readme.md file"
         try:
             video_name = path.split("/")[2]
             video_id = video_name[:11]
